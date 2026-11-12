@@ -168,3 +168,111 @@ def finalize_interactive_map(m, legend_title, legend_dict, output_html):
     )
     m.get_root().html.add_child(Element(bring_front_js))
     m.save(output_html)
+
+
+def save_trend_chart(stats_list, output_path):
+    """
+    Menyimpan grafik 2 panel profesional:
+    - Panel Atas: Bar Chart Luas Abrasi vs Akresi per Periode (Nilai >= 0)
+    - Panel Bawah: Bar Chart Perubahan Bersih (Net Shoreline Change) dengan warna dinamis
+      (Hijau Tosca = Surplus Daratan, Merah = Defisit Daratan).
+    Desain ini menghilangkan tumpang tindih garis dan angka di bawah batang.
+    """
+    from matplotlib.patches import Patch
+
+    periodes = [s['periode'] for s in stats_list]
+    abrasi_ha = [s['abrasi_ha'] for s in stats_list]
+    akresi_ha = [s['akresi_ha'] for s in stats_list]
+    net_ha = [s['net_change_ha'] for s in stats_list]
+
+    x = np.arange(len(periodes))
+    width = 0.35
+
+    fig, (ax1, ax2) = plt.subplots(
+        2, 1,
+        figsize=(11, 7.8),
+        dpi=300,
+        sharex=True,
+        gridspec_kw={'height_ratios': [1.3, 1.0]}
+    )
+
+    # -------------------------------------------------------------
+    # PANEL 1 (ATAS): Luas Abrasi vs Akresi per Periode
+    # -------------------------------------------------------------
+    rects1 = ax1.bar(x - width/2, abrasi_ha, width, label='Abrasi (Erosi Pantai)',
+                     color='#E53935', alpha=0.9, edgecolor='#B71C1C', linewidth=0.8)
+    rects2 = ax1.bar(x + width/2, akresi_ha, width, label='Akresi (Sedimentasi)',
+                     color='#00BCD4', alpha=0.9, edgecolor='#00838F', linewidth=0.8)
+
+    ax1.set_ylabel('Luas Kejadian (Hektar / ha)', fontsize=9.5, fontweight='bold')
+    ax1.grid(axis='y', linestyle='--', alpha=0.5)
+    ax1.set_title(
+        'Dinamika Fluktuasi Abrasi dan Akresi Pantai Parangtritis\n'
+        '(1996 - 2026 | Interval 5 Tahun)',
+        fontsize=12,
+        fontweight='bold',
+        pad=12,
+    )
+    ax1.legend(loc='upper right', frameon=True, fontsize=9)
+
+    max_top = max(max(abrasi_ha), max(akresi_ha))
+    ax1.set_ylim(0, max_top * 1.18)
+
+    for rect in rects1:
+        h = rect.get_height()
+        if h > 0.01:
+            ax1.annotate(f'{h:.2f}', xy=(rect.get_x() + rect.get_width() / 2, h),
+                         xytext=(0, 3), textcoords="offset points",
+                         ha='center', va='bottom', fontsize=8, color='#B71C1C', fontweight='bold')
+        else:
+            ax1.annotate('0.00', xy=(rect.get_x() + rect.get_width() / 2, 0),
+                         xytext=(0, 3), textcoords="offset points",
+                         ha='center', va='bottom', fontsize=7.5, color='#888')
+
+    for rect in rects2:
+        h = rect.get_height()
+        if h > 0.01:
+            ax1.annotate(f'{h:.2f}', xy=(rect.get_x() + rect.get_width() / 2, h),
+                         xytext=(0, 3), textcoords="offset points",
+                         ha='center', va='bottom', fontsize=8, color='#006064', fontweight='bold')
+
+    # -------------------------------------------------------------
+    # PANEL 2 (BAWAH): Perubahan Bersih Garis Pantai (Net Change)
+    # -------------------------------------------------------------
+    colors_net = ['#00897B' if val >= 0 else '#D32F2F' for val in net_ha]
+    rects_net = ax2.bar(x, net_ha, width=0.45, color=colors_net, alpha=0.85, edgecolor='black', linewidth=0.6)
+
+    ax2.axhline(0, color='black', linewidth=1.0, linestyle='-')
+    ax2.set_ylabel('Perubahan Bersih (ha)\n[Akresi - Abrasi]', fontsize=9.5, fontweight='bold')
+    ax2.set_xlabel('Periode Pengamatan (Interval 5 Tahunan)', fontsize=10, fontweight='bold', labelpad=10)
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(periodes, fontsize=9.5, fontweight='bold')
+    ax2.tick_params(axis='x', pad=8)
+    ax2.grid(axis='y', linestyle='--', alpha=0.5)
+
+    # Berikan batas bawah yang cukup luas (-3.6) agar label tidak menabrak sumbu X
+    y_max_net = max(net_ha)
+    ax2.set_ylim(-3.6, y_max_net * 1.25)
+
+    for rect, val in zip(rects_net, net_ha):
+        if val >= 0:
+            ax2.annotate(f'+{val:.2f} ha', xy=(rect.get_x() + rect.get_width() / 2, val),
+                         xytext=(0, 4), textcoords="offset points",
+                         ha='center', va='bottom', fontsize=8.5, color='#004D40', fontweight='bold')
+        else:
+            ax2.annotate(f'{val:.2f} ha', xy=(rect.get_x() + rect.get_width() / 2, val),
+                         xytext=(0, -5), textcoords="offset points",
+                         ha='center', va='top', fontsize=8.5, color='#B71C1C', fontweight='bold')
+
+    legend_elements = [
+        Patch(facecolor='#00897B', edgecolor='black', label='Surplus Daratan (Akresi Dominan)'),
+        Patch(facecolor='#D32F2F', edgecolor='black', label='Defisit Daratan (Abrasi Dominan)')
+    ]
+    ax2.legend(handles=legend_elements, loc='upper right', frameon=True, fontsize=8)
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+
+
+

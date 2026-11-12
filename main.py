@@ -2,6 +2,7 @@
 main.py: Eksekusi Utama Pipeline Deteksi Dinamika Garis Pantai & Ekspor Citra Satelit Parangtritis (1996 - 2026)
 """
 import os
+import csv
 import geemap
 import config as cfg
 import preprocessing as prep
@@ -15,7 +16,8 @@ import visualization as vis
 dirs = {
     'html': 'outputs/html',
     'geotiff': 'outputs/geotiff',
-    'png': 'outputs/png'
+    'png': 'outputs/png',
+    'csv': 'outputs/csv'
 }
 for path in dirs.values():
     os.makedirs(path, exist_ok=True)
@@ -65,10 +67,13 @@ for idx, year in enumerate(cfg.year_list):
     print(f"-> Citra satelit ({sensor_label}) & garis daratan tahun {year} berhasil disiapkan.")
 
 # =========================================================================
-# 3. DETEKSI SPASIAL INTERVAL 5 TAHUNAN (SEMUA PERIODE LENGKAP)
+# 3. DETEKSI SPASIAL INTERVAL 5 TAHUNAN & PERHITUNGAN KUANTITATIF LUAS
 # =========================================================================
 abrasi_layers = []
 akresi_layers = []
+stats_list = []
+
+print("\nMenghitung deteksi perubahan dan luasan area (hektar) per periode 5 tahunan...")
 
 for i in range(len(cfg.year_list) - 1):
     y1 = cfg.year_list[i]
@@ -79,6 +84,24 @@ for i in range(len(cfg.year_list) - 1):
 
     abrasi_layers.append(abr)
     akresi_layers.append(akr)
+
+    # Perhitungan kuantitatif luas (m² dan ha)
+    stat_abr = cd.calculate_area(abr, cfg.roi)
+    stat_akr = cd.calculate_area(akr, cfg.roi)
+    net_ha = stat_akr['ha'] - stat_abr['ha']
+    dominan = 'Akresi' if net_ha > 0 else ('Abrasi' if net_ha < 0 else 'Stabil')
+
+    stats_list.append({
+        'periode': f'{y1}-{y2}',
+        'abrasi_m2': stat_abr['m2'],
+        'abrasi_ha': stat_abr['ha'],
+        'akresi_m2': stat_akr['m2'],
+        'akresi_ha': stat_akr['ha'],
+        'net_change_ha': net_ha,
+        'status_dominan': dominan
+    })
+
+    print(f"-> Periode {y1}-{y2}: Abrasi = {stat_abr['ha']:.2f} ha | Akresi = {stat_akr['ha']:.2f} ha | Net = {net_ha:+.2f} ha ({dominan})")
 
     # Layer Akresi per periode (Pendukung - default off)
     vis.add_ee_layer(
@@ -101,10 +124,24 @@ for i in range(len(cfg.year_list) - 1):
     )
 
 # =========================================================================
-# 4. AGREGASI JEJAK KUMULATIF 30 TAHUN (1996 - 2026)
+# 4. AGREGASI JEJAK KUMULATIF & PERUBAHAN LANGSUNG 30 TAHUN (1996 - 2026)
 # =========================================================================
+# A. Jejak Kumulatif (Spatial Footprint: Union seluruh kejadian per periode)
 total_abrasi = cd.combine_cumulative(abrasi_layers)
 total_akresi = cd.combine_cumulative(akresi_layers)
+
+stat_cum_abr = cd.calculate_area(total_abrasi, cfg.roi)
+stat_cum_akr = cd.calculate_area(total_akresi, cfg.roi)
+cum_net_ha = stat_cum_akr['ha'] - stat_cum_abr['ha']
+cum_dominan = 'Akresi' if cum_net_ha > 0 else ('Abrasi' if cum_net_ha < 0 else 'Stabil')
+
+# B. Perubahan Langsung Titik Awal vs Titik Akhir (1996 vs 2026)
+direct_abr = cd.detect_abrasi(land_dict[1996], land_dict[2026])
+direct_akr = cd.detect_akresi(land_dict[1996], land_dict[2026])
+stat_dir_abr = cd.calculate_area(direct_abr, cfg.roi)
+stat_dir_akr = cd.calculate_area(direct_akr, cfg.roi)
+dir_net_ha = stat_dir_akr['ha'] - stat_dir_abr['ha']
+dir_dominan = 'Akresi' if dir_net_ha > 0 else ('Abrasi' if dir_net_ha < 0 else 'Stabil')
 
 # Layer Garis Acuan
 vis.add_ee_layer(Map, land_dict[1996].selfMask(), {'palette': [cfg.palette['daratan_base']]}, 'Daratan Dasar 1996', show=False, pane='analysis_pane')
@@ -115,7 +152,48 @@ vis.add_ee_layer(Map, total_akresi, {'palette': [cfg.palette['total_akresi']]}, 
 vis.add_ee_layer(Map, total_abrasi, {'palette': [cfg.palette['total_abrasi']]}, 'UTAMA: TOTAL JEJAK ABRASI (1996-2026)', show=True, pane='analysis_pane')
 
 # =========================================================================
-# 5. SIMPAN PETA HTML INTERAKTIF & LEGENDA
+# 5. CETAK & EKSPOR REKAPITULASI STATISTIK KUANTITATIF (CSV & GRAFIK)
+# =========================================================================
+print("\n" + "=" * 92)
+print("TABEL REKAPITULASI DINAMIKA GARIS PANTAI PARANGTRITIS (1996 - 2026)")
+print("=" * 92)
+print(f"{'Periode':<16} | {'Abrasi (m²)':<13} | {'Abrasi (ha)':<11} | {'Akresi (m²)':<13} | {'Akresi (ha)':<11} | {'Net Change':<11} | {'Status':<8}")
+print("-" * 92)
+
+for s in stats_list:
+    print(f"{s['periode']:<16} | {s['abrasi_m2']:>13.1f} | {s['abrasi_ha']:>11.2f} | {s['akresi_m2']:>13.1f} | {s['akresi_ha']:>11.2f} | {s['net_change_ha']:>+10.2f} ha | {s['status_dominan']:<8}")
+
+print("-" * 92)
+print(f"{'JEJAK KUMULATIF':<16} | {stat_cum_abr['m2']:>13.1f} | {stat_cum_abr['ha']:>11.2f} | {stat_cum_akr['m2']:>13.1f} | {stat_cum_akr['ha']:>11.2f} | {cum_net_ha:>+10.2f} ha | {cum_dominan:<8}")
+print(f"{'LANGSUNG 96-26':<16} | {stat_dir_abr['m2']:>13.1f} | {stat_dir_abr['ha']:>11.2f} | {stat_dir_akr['m2']:>13.1f} | {stat_dir_akr['ha']:>11.2f} | {dir_net_ha:>+10.2f} ha | {dir_dominan:<8}")
+print("=" * 92)
+
+# Ekspor tabel ke format CSV
+csv_file = os.path.join(dirs['csv'], 'rekapitulasi_dinamika_pantai.csv')
+with open(csv_file, mode='w', newline='', encoding='utf-8') as f:
+    writer = csv.writer(f)
+    writer.writerow(['Kategori_Periode', 'Luas_Abrasi_m2', 'Luas_Abrasi_ha', 'Luas_Akresi_m2', 'Luas_Akresi_ha', 'Perubahan_Bersih_ha', 'Status_Dominan'])
+    for s in stats_list:
+        writer.writerow([s['periode'], round(s['abrasi_m2'], 2), round(s['abrasi_ha'], 2),
+                         round(s['akresi_m2'], 2), round(s['akresi_ha'], 2),
+                         round(s['net_change_ha'], 2), s['status_dominan']])
+    writer.writerow(['JEJAK_KUMULATIF_30_THN', round(stat_cum_abr['m2'], 2), round(stat_cum_abr['ha'], 2),
+                     round(stat_cum_akr['m2'], 2), round(stat_cum_akr['ha'], 2),
+                     round(cum_net_ha, 2), cum_dominan])
+    writer.writerow(['LANGSUNG_1996_VS_2026', round(stat_dir_abr['m2'], 2), round(stat_dir_abr['ha'], 2),
+                     round(stat_dir_akr['m2'], 2), round(stat_dir_akr['ha'], 2),
+                     round(dir_net_ha, 2), dir_dominan])
+
+print(f"[SUKSES] Tabel CSV rekapitulasi tersimpan di: {csv_file}")
+
+# Ekspor grafik tren visualisasi
+trend_chart_file = os.path.join(dirs['png'], 'grafik_tren_abrasi_akresi.png')
+vis.save_trend_chart(stats_list, trend_chart_file)
+print(f"[SUKSES] Grafik tren fluktuasi tersimpan di: {trend_chart_file}")
+
+
+# =========================================================================
+# 6. SIMPAN PETA HTML INTERAKTIF & LEGENDA
 # =========================================================================
 legend_dict = {
     'Jejak Abrasi (Fokus Utama)': cfg.palette['total_abrasi'],
@@ -126,7 +204,7 @@ vis.finalize_interactive_map(Map, 'Dinamika Pantai Parangtritis', legend_dict, h
 print(f"\n[SUKSES] Peta HTML interaktif tersimpan di: {html_file}")
 
 # =========================================================================
-# 6. PENYIMPANAN OUTPUT GEOTIFF & PNG
+# 7. PENYIMPANAN OUTPUT GEOTIFF & PNG
 # =========================================================================
 # A. Ekspor Citra Raster GeoTIFF Analisis Abrasi & Akresi (Resolusi 30 m)
 print("Mengekspor GeoTIFF hasil analisis abrasi/akresi ke folder 'outputs/geotiff/'...")
